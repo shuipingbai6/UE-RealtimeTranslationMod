@@ -1,6 +1,6 @@
 # RealtimeTranslationMod
 
-A UE4/UE5 game real-time translation mod based on UE4SS, utilizing AI APIs for instant in-game text translation.
+A UE4/UE5 game real-time translation mod based on UE4SS, utilizing AI APIs for instant in-game text translation.（It's currently in the preliminary stage with only a general framework, but the core functions are usable.）
 
 ## Features
 
