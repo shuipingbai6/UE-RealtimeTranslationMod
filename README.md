@@ -1,6 +1,6 @@
 # RealtimeTranslationMod
 
-基于 UE4SS 的 UE4/UE5 游戏实时翻译 Mod，利用 AI API 实现游戏内文本的即时翻译。
+基于 UE4SS 的 UE4/UE5 游戏实时翻译 Mod，利用 AI API 实现游戏内文本的即时翻译。（目前处于初步阶段只是有大体框架，核心功能能够使用）
 
 ## 功能特性
 
