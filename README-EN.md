@@ -195,6 +195,7 @@ RealtimeTranslationMod/
 ## License
 
 GPL-3.0 License
+（adopt GPL 3.0 in the hope that all improvements will be contributed back to the community, so that the basic framework will become increasingly robust.）
 
 ## Acknowledgments
 
