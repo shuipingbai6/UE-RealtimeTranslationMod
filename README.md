@@ -195,6 +195,7 @@ RealtimeTranslationMod/
 ## 许可证
 
 GPL-3.0 License
+（采用gpl3.0是希望所有改进都回馈社区，这样基本框架会越来越牢固）
 
 ## 致谢
 
