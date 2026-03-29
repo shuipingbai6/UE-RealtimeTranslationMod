@@ -7,11 +7,12 @@
 #include <sstream>
 #include <filesystem>
 
-// Simple JSON parsing (no external dependencies)
+// 简单的JSON解析（不依赖外部库）
+// 注意：UE4SS内置glaze库，但我们这里使用简单的字符串解析以避免复杂性
 
 namespace RC::RealtimeTranslation
 {
-    // Simple JSON string escape handling
+    // 简单的JSON字符串转义处理
     static auto JsonEscape(const std::wstring& s) -> std::wstring
     {
         std::wstring result;
@@ -63,7 +64,7 @@ namespace RC::RealtimeTranslation
         return result;
     }
 
-    // Simple JSON string extraction
+    // 简单的JSON字符串提取
     static auto ExtractJsonString(const std::wstring& json, const std::wstring& key) -> std::wstring
     {
         std::wstring searchKey = L"\"" + key + L"\"";
@@ -73,14 +74,14 @@ namespace RC::RealtimeTranslation
         pos = json.find(L':', pos);
         if (pos == std::wstring::npos) return L"";
 
-        // Skip whitespace
+        // 跳过空白
         pos++;
         while (pos < json.size() && (json[pos] == L' ' || json[pos] == L'\t' || json[pos] == L'\n' || json[pos] == L'\r'))
             pos++;
 
         if (pos >= json.size() || json[pos] != L'"') return L"";
 
-        // Extract string value
+        // 提取字符串值
         pos++;
         size_t start = pos;
         bool escape = false;
@@ -113,12 +114,12 @@ namespace RC::RealtimeTranslation
         pos = json.find(L':', pos);
         if (pos == std::wstring::npos) return defaultValue;
 
-        // Skip whitespace
+        // 跳过空白
         pos++;
         while (pos < json.size() && (json[pos] == L' ' || json[pos] == L'\t' || json[pos] == L'\n' || json[pos] == L'\r'))
             pos++;
 
-        // Extract number
+        // 提取数字
         std::wstring numStr;
         while (pos < json.size() && (json[pos] >= L'0' && json[pos] <= L'9'))
         {
@@ -138,7 +139,7 @@ namespace RC::RealtimeTranslation
         pos = json.find(L':', pos);
         if (pos == std::wstring::npos) return defaultValue;
 
-        // Skip whitespace
+        // 跳过空白
         pos++;
         while (pos < json.size() && (json[pos] == L' ' || json[pos] == L'\t' || json[pos] == L'\n' || json[pos] == L'\r'))
             pos++;
@@ -393,7 +394,7 @@ namespace RC::RealtimeTranslation
     {
         std::shared_lock lock(m_mutex);
 
-        // Validate API configuration
+        // 检查API配置
         if (m_config.AIProvider.ApiEndpoint.empty())
         {
             Output::send<LogLevel::Warning>(STR("[ConfigManager] API endpoint is empty.\n"));

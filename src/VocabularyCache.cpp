@@ -1,4 +1,5 @@
 #include <VocabularyCache.hpp>
+#include <TemplateCache.hpp>
 #include <DynamicOutput/DynamicOutput.hpp>
 #include <DebugLogger.hpp>
 
@@ -65,6 +66,26 @@ namespace RC::RealtimeTranslation
         return result;
     }
 
+    // 实体类型字符串转换
+    static auto EntityTypeToString(EntityType type) -> std::wstring
+    {
+        switch (type)
+        {
+            case EntityType::NUM: return L"NUM";
+            case EntityType::PERCENT: return L"PERCENT";
+            case EntityType::DATE: return L"DATE";
+            default: return L"UNKNOWN";
+        }
+    }
+
+    static auto StringToEntityType(const std::wstring& str) -> EntityType
+    {
+        if (str == L"NUM") return EntityType::NUM;
+        if (str == L"PERCENT") return EntityType::PERCENT;
+        if (str == L"DATE") return EntityType::DATE;
+        return EntityType::NUM; // 默认
+    }
+
     VocabularyCache& VocabularyCache::Instance()
     {
         static VocabularyCache instance;
@@ -81,7 +102,7 @@ namespace RC::RealtimeTranslation
         }
 
         // 最后保存一次
-        if (m_dirty)
+        if (m_dirty || TemplateCache::Instance().IsDirty())
         {
             Save();
         }
@@ -91,6 +112,9 @@ namespace RC::RealtimeTranslation
     {
         std::unique_lock lock(m_mutex);
         m_filePath = filePath;
+
+        // 初始化模板缓存
+        TemplateCache::Instance().Initialize(filePath);
 
         // 启动后台保存线程
         if (m_autoSave && !m_saveThread.joinable())
@@ -137,6 +161,16 @@ namespace RC::RealtimeTranslation
         return false;
     }
 
+    auto VocabularyCache::GetTemplate(const std::wstring& skeleton) -> std::optional<TemplateEntry>
+    {
+        return TemplateCache::Instance().GetTemplate(skeleton);
+    }
+
+    auto VocabularyCache::LookupTemplate(const std::wstring& skeleton, TemplateEntry& outEntry) -> bool
+    {
+        return TemplateCache::Instance().LookupTemplate(skeleton, outEntry);
+    }
+
     auto VocabularyCache::Store(const std::wstring& original, const std::wstring& translated) -> void
     {
         {
@@ -148,6 +182,21 @@ namespace RC::RealtimeTranslation
         RT_DEBUG_LOG(std::wstring(L"[VocabularyCache] Stored: '") + original + L"' -> '" + translated + L"'");
 
         Save();
+    }
+
+    auto VocabularyCache::StoreTemplate(const std::wstring& sourceSkeleton,
+                                         const std::wstring& targetTemplate,
+                                         const std::vector<EntityType>& entityTypes) -> void
+    {
+        TemplateCache::Instance().StoreTemplate(sourceSkeleton, targetTemplate, entityTypes);
+        m_dirty = true;
+    }
+
+    auto VocabularyCache::StoreTemplateFromTranslation(const ExtractionResult& extraction,
+                                                        const std::wstring& translatedText) -> void
+    {
+        TemplateCache::Instance().StoreFromTranslation(extraction, translatedText);
+        m_dirty = true;
     }
 
     auto VocabularyCache::StoreBatch(const std::vector<std::pair<std::wstring, std::wstring>>& entries) -> void
@@ -198,78 +247,249 @@ namespace RC::RealtimeTranslation
         std::unique_lock lock(m_mutex);
         m_cache.clear();
 
+        // 解析 entries 部分
         size_t entriesStart = content.find(L"\"entries\"");
-        if (entriesStart == std::wstring::npos)
+        if (entriesStart != std::wstring::npos)
         {
-            RT_DEBUG_LOG(L"[VocabularyCache] No entries found in vocabulary file");
-            Output::send<LogLevel::Warning>(STR("[VocabularyCache] No entries found in vocabulary file.\n"));
-            return true;
+            entriesStart = content.find(L'{', entriesStart);
+            if (entriesStart != std::wstring::npos)
+            {
+                size_t pos = entriesStart + 1;
+                int braceCount = 1;
+                int entryCount = 0;
+
+                while (pos < content.size() && braceCount > 0)
+                {
+                    while (pos < content.size() && (content[pos] == L' ' || content[pos] == L'\t' ||
+                           content[pos] == L'\n' || content[pos] == L'\r' || content[pos] == L','))
+                        pos++;
+
+                    if (pos >= content.size()) break;
+
+                    if (content[pos] == L'}')
+                    {
+                        braceCount--;
+                        pos++;
+                        continue;
+                    }
+
+                    if (content[pos] != L'"') break;
+                    pos++;
+                    size_t keyStart = pos;
+                    bool escape = false;
+                    while (pos < content.size())
+                    {
+                        if (escape) escape = false;
+                        else if (content[pos] == L'\\') escape = true;
+                        else if (content[pos] == L'"') break;
+                        pos++;
+                    }
+                    std::wstring key = JsonUnescape(content.substr(keyStart, pos - keyStart));
+                    pos++;
+
+                    while (pos < content.size() && content[pos] != L':') pos++;
+                    pos++;
+                    while (pos < content.size() && (content[pos] == L' ' || content[pos] == L'\t'))
+                        pos++;
+
+                    if (pos >= content.size() || content[pos] != L'"') break;
+                    pos++;
+                    size_t valueStart = pos;
+                    escape = false;
+                    while (pos < content.size())
+                    {
+                        if (escape) escape = false;
+                        else if (content[pos] == L'\\') escape = true;
+                        else if (content[pos] == L'"') break;
+                        pos++;
+                    }
+                    std::wstring value = JsonUnescape(content.substr(valueStart, pos - valueStart));
+                    pos++;
+
+                    if (!key.empty())
+                    {
+                        m_cache[key] = value;
+                        entryCount++;
+                    }
+                }
+
+                RT_DEBUG_LOG(std::wstring(L"[VocabularyCache] Loaded ") + std::to_wstring(entryCount) + L" entries");
+            }
         }
 
-        entriesStart = content.find(L'{', entriesStart);
-        if (entriesStart == std::wstring::npos) return true;
-
-        size_t pos = entriesStart + 1;
-        int braceCount = 1;
-        int entryCount = 0;
-
-        while (pos < content.size() && braceCount > 0)
+        // 解析 templates 部分
+        size_t templatesStart = content.find(L"\"templates\"");
+        if (templatesStart != std::wstring::npos)
         {
-            while (pos < content.size() && (content[pos] == L' ' || content[pos] == L'\t' ||
-                   content[pos] == L'\n' || content[pos] == L'\r' || content[pos] == L','))
-                pos++;
-
-            if (pos >= content.size()) break;
-
-            if (content[pos] == L'}')
+            templatesStart = content.find(L'[', templatesStart);
+            if (templatesStart != std::wstring::npos)
             {
-                braceCount--;
-                pos++;
-                continue;
-            }
+                size_t pos = templatesStart + 1;
+                int templateCount = 0;
 
-            if (content[pos] != L'"') break;
-            pos++;
-            size_t keyStart = pos;
-            bool escape = false;
-            while (pos < content.size())
-            {
-                if (escape) escape = false;
-                else if (content[pos] == L'\\') escape = true;
-                else if (content[pos] == L'"') break;
-                pos++;
-            }
-            std::wstring key = JsonUnescape(content.substr(keyStart, pos - keyStart));
-            pos++;
+                while (pos < content.size())
+                {
+                    // 跳过空白
+                    while (pos < content.size() && (content[pos] == L' ' || content[pos] == L'\t' ||
+                           content[pos] == L'\n' || content[pos] == L'\r' || content[pos] == L','))
+                        pos++;
 
-            while (pos < content.size() && content[pos] != L':') pos++;
-            pos++;
-            while (pos < content.size() && (content[pos] == L' ' || content[pos] == L'\t'))
-                pos++;
+                    if (pos >= content.size() || content[pos] == L']') break;
 
-            if (pos >= content.size() || content[pos] != L'"') break;
-            pos++;
-            size_t valueStart = pos;
-            escape = false;
-            while (pos < content.size())
-            {
-                if (escape) escape = false;
-                else if (content[pos] == L'\\') escape = true;
-                else if (content[pos] == L'"') break;
-                pos++;
-            }
-            std::wstring value = JsonUnescape(content.substr(valueStart, pos - valueStart));
-            pos++;
+                    // 解析模板对象
+                    if (content[pos] == L'{')
+                    {
+                        pos++;
+                        std::wstring sourceSkeleton;
+                        std::wstring targetTemplate;
+                        std::vector<EntityType> entityTypes;
 
-            if (!key.empty())
-            {
-                m_cache[key] = value;
-                entryCount++;
+                        while (pos < content.size())
+                        {
+                            while (pos < content.size() && (content[pos] == L' ' || content[pos] == L'\t' ||
+                                   content[pos] == L'\n' || content[pos] == L'\r' || content[pos] == L','))
+                                pos++;
+
+                            if (pos >= content.size() || content[pos] == L'}')
+                            {
+                                pos++;
+                                break;
+                            }
+
+                            // 解析键
+                            if (content[pos] != L'"') { pos++; continue; }
+                            pos++;
+                            size_t keyStart = pos;
+                            bool escape = false;
+                            while (pos < content.size())
+                            {
+                                if (escape) escape = false;
+                                else if (content[pos] == L'\\') escape = true;
+                                else if (content[pos] == L'"') break;
+                                pos++;
+                            }
+                            std::wstring key = JsonUnescape(content.substr(keyStart, pos - keyStart));
+                            pos++;
+
+                            while (pos < content.size() && content[pos] != L':') pos++;
+                            pos++;
+                            while (pos < content.size() && (content[pos] == L' ' || content[pos] == L'\t'))
+                                pos++;
+
+                            // 解析值
+                            if (content[pos] == L'"')
+                            {
+                                pos++;
+                                size_t valueStart = pos;
+                                escape = false;
+                                while (pos < content.size())
+                                {
+                                    if (escape) escape = false;
+                                    else if (content[pos] == L'\\') escape = true;
+                                    else if (content[pos] == L'"') break;
+                                    pos++;
+                                }
+                                std::wstring value = JsonUnescape(content.substr(valueStart, pos - valueStart));
+                                pos++;
+
+                                if (key == L"sourceSkeleton")
+                                {
+                                    sourceSkeleton = value;
+                                }
+                                else if (key == L"targetTemplate")
+                                {
+                                    targetTemplate = value;
+                                }
+                                else if (key == L"entityTypes")
+                                {
+                                    // 解析实体类型数组
+                                    size_t arrayStart = value.find(L'[');
+                                    if (arrayStart != std::wstring::npos)
+                                    {
+                                        // 直接从content中解析数组
+                                    }
+                                }
+                            }
+                            else if (content[pos] == L'[')
+                            {
+                                // 解析数组（entityTypes）
+                                if (key == L"entityTypes")
+                                {
+                                    pos++;
+                                    while (pos < content.size())
+                                    {
+                                        while (pos < content.size() && (content[pos] == L' ' || content[pos] == L'\t' ||
+                                               content[pos] == L'\n' || content[pos] == L'\r' || content[pos] == L','))
+                                            pos++;
+
+                                        if (pos >= content.size() || content[pos] == L']')
+                                        {
+                                            pos++;
+                                            break;
+                                        }
+
+                                        if (content[pos] == L'"')
+                                        {
+                                            pos++;
+                                            size_t typeStart = pos;
+                                            escape = false;
+                                            while (pos < content.size())
+                                            {
+                                                if (escape) escape = false;
+                                                else if (content[pos] == L'\\') escape = true;
+                                                else if (content[pos] == L'"') break;
+                                                pos++;
+                                            }
+                                            std::wstring typeStr = content.substr(typeStart, pos - typeStart);
+                                            entityTypes.push_back(StringToEntityType(typeStr));
+                                            pos++;
+                                        }
+                                        else
+                                        {
+                                            pos++;
+                                        }
+                                    }
+                                }
+                                else
+                                {
+                                    // 跳过其他数组
+                                    int bracketCount = 1;
+                                    pos++;
+                                    while (pos < content.size() && bracketCount > 0)
+                                    {
+                                        if (content[pos] == L'[') bracketCount++;
+                                        else if (content[pos] == L']') bracketCount--;
+                                        pos++;
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                // 跳过其他类型的值
+                                while (pos < content.size() && content[pos] != L',' && content[pos] != L'}')
+                                    pos++;
+                            }
+                        }
+
+                        // 存储模板
+                        if (!sourceSkeleton.empty() && !targetTemplate.empty())
+                        {
+                            TemplateCache::Instance().StoreTemplate(sourceSkeleton, targetTemplate, entityTypes);
+                            templateCount++;
+                        }
+                    }
+                    else
+                    {
+                        pos++;
+                    }
+                }
+
+                RT_DEBUG_LOG(std::wstring(L"[VocabularyCache] Loaded ") + std::to_wstring(templateCount) + L" templates");
             }
         }
 
-        RT_DEBUG_LOG(std::wstring(L"[VocabularyCache] Loaded ") + std::to_wstring(entryCount) + L" entries");
-        Output::send<LogLevel::Normal>(STR("[VocabularyCache] Loaded {} entries from: {}\n"), m_cache.size(), m_filePath);
+        Output::send<LogLevel::Normal>(STR("[VocabularyCache] Loaded {} entries, {} templates from: {}\n"), 
+            m_cache.size(), TemplateCache::Instance().GetTemplateCount(), m_filePath);
         return true;
     }
 
@@ -297,10 +517,11 @@ namespace RC::RealtimeTranslation
 
             std::wstringstream json;
             json << L"{\n";
-            json << L"  \"version\": \"1.0\",\n";
+            json << L"  \"version\": \"1.1\",\n";
             json << L"  \"created\": \"" << std::chrono::system_clock::now().time_since_epoch().count() << L"\",\n";
+            
+            // entries 部分
             json << L"  \"entries\": {\n";
-
             bool first = true;
             for (const auto& [original, translated] : cacheCopy)
             {
@@ -308,8 +529,29 @@ namespace RC::RealtimeTranslation
                 first = false;
                 json << L"    \"" << JsonEscape(original) << L"\": \"" << JsonEscape(translated) << L"\"";
             }
+            json << L"\n  },\n";
 
-            json << L"\n  }\n";
+            // templates 部分
+            json << L"  \"templates\": [\n";
+            auto templates = TemplateCache::Instance().ExportAllTemplates();
+            first = true;
+            for (const auto& tmpl : templates)
+            {
+                if (!first) json << L",\n";
+                first = false;
+                json << L"    {\n";
+                json << L"      \"sourceSkeleton\": \"" << JsonEscape(tmpl.SourceSkeleton) << L"\",\n";
+                json << L"      \"targetTemplate\": \"" << JsonEscape(tmpl.TargetTemplate) << L"\",\n";
+                json << L"      \"entityTypes\": [";
+                for (size_t i = 0; i < tmpl.EntityTypes.size(); ++i)
+                {
+                    if (i > 0) json << L", ";
+                    json << L"\"" << EntityTypeToString(tmpl.EntityTypes[i]) << L"\"";
+                }
+                json << L"]\n";
+                json << L"    }";
+            }
+            json << L"\n  ]\n";
             json << L"}\n";
 
             std::wofstream file(filePath);
@@ -327,6 +569,7 @@ namespace RC::RealtimeTranslation
             file.close();
 
             m_dirty = false;
+            TemplateCache::Instance().ClearDirty();
             RT_DEBUG_LOG(std::wstring(L"[VocabularyCache] Saved successfully: ") + std::to_wstring(cacheCopy.size()) + L" entries");
             Output::send<LogLevel::Verbose>(STR("[VocabularyCache] Saved {} entries to: {}\n"), cacheCopy.size(), filePathCopy);
             return true;
@@ -346,22 +589,44 @@ namespace RC::RealtimeTranslation
         return m_cache.size();
     }
 
+    auto VocabularyCache::GetTemplateCount() const -> size_t
+    {
+        return TemplateCache::Instance().GetTemplateCount();
+    }
+
     auto VocabularyCache::GetHitRate() const -> float
     {
         size_t total = m_queryCount;
         return total > 0 ? static_cast<float>(m_hitCount) / static_cast<float>(total) : 0.0f;
     }
 
+    auto VocabularyCache::GetTemplateHitCount() const -> size_t
+    {
+        return TemplateCache::Instance().GetHitCount();
+    }
+
+    auto VocabularyCache::GetTemplateQueryCount() const -> size_t
+    {
+        return TemplateCache::Instance().GetQueryCount();
+    }
+
+    auto VocabularyCache::GetTemplateHitRate() const -> float
+    {
+        return TemplateCache::Instance().GetHitRate();
+    }
+
     auto VocabularyCache::ResetStats() -> void
     {
         m_hitCount = 0;
         m_queryCount = 0;
+        TemplateCache::Instance().ResetStats();
     }
 
     auto VocabularyCache::Clear() -> void
     {
         std::unique_lock lock(m_mutex);
         m_cache.clear();
+        TemplateCache::Instance().Clear();
         m_dirty = true;
     }
 
@@ -373,7 +638,7 @@ namespace RC::RealtimeTranslation
 
     auto VocabularyCache::FlushIfDirty() -> void
     {
-        if (m_dirty)
+        if (m_dirty || TemplateCache::Instance().IsDirty())
         {
             Save();
         }
@@ -386,7 +651,7 @@ namespace RC::RealtimeTranslation
             std::unique_lock<std::mutex> lock(m_saveMutex);
             m_saveCv.wait_for(lock, std::chrono::milliseconds(m_saveIntervalMs));
 
-            if (m_dirty && m_autoSave)
+            if ((m_dirty || TemplateCache::Instance().IsDirty()) && m_autoSave)
             {
                 Save();
             }

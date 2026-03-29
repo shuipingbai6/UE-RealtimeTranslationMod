@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TranslationCommon.hpp"
+#include "EntityExtractor.hpp"
 #include <concurrentqueue.h>
 #include <thread>
 #include <atomic>
@@ -13,6 +14,7 @@ namespace RC::RealtimeTranslation
     /**
      * 异步翻译管理器
      * 管理翻译任务队列和工作线程
+     * 集成实体提取和模板缓存功能
      */
     class TranslationManager
     {

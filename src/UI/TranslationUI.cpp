@@ -24,7 +24,7 @@ namespace RC::RealtimeTranslation::UI
     {
         if (m_initialized) return;
 
-        // Initialize config buffers
+        // 初始化配置缓冲区
         UpdateConfigBuffers();
 
         m_initialized = true;
@@ -35,7 +35,7 @@ namespace RC::RealtimeTranslation::UI
     {
         if (!m_initialized) return;
 
-        // Main tab bar
+        // 主标签页
         ImGui::BeginTabBar("TranslationTabs");
 
         if (ImGui::BeginTabItem("Config"))
@@ -69,7 +69,7 @@ namespace RC::RealtimeTranslation::UI
     {
         ImGui::Spacing();
 
-        // AI Provider configuration
+        // AI Provider配置
         ImGui::Text("AI Provider Configuration");
         ImGui::Separator();
 
@@ -121,7 +121,7 @@ namespace RC::RealtimeTranslation::UI
 
         ImGui::Spacing();
 
-        // Translation settings
+        // Translation配置
         ImGui::Text("Translation Settings");
         ImGui::Separator();
 
@@ -153,7 +153,7 @@ namespace RC::RealtimeTranslation::UI
         ImGui::Spacing();
         ImGui::Separator();
 
-        // Buttons
+        // 按钮
         if (ImGui::Button("Apply Config", ImVec2(120, 30)))
         {
             if (ApplyConfig())
@@ -168,7 +168,7 @@ namespace RC::RealtimeTranslation::UI
 
         ImGui::SameLine();
 
-        // Test connection button
+        // 测试连接按钮
         if (ImGui::Button("Test Connection", ImVec2(120, 30)))
         {
             if (ApplyConfig())
@@ -188,7 +188,7 @@ namespace RC::RealtimeTranslation::UI
         ImGui::Spacing();
         ImGui::Separator();
 
-        // Translation control
+        // 翻译控制
         auto modInstance = TranslationMod::GetInstance();
         bool isActive = modInstance && modInstance->IsTranslationActive();
 
@@ -237,7 +237,7 @@ namespace RC::RealtimeTranslation::UI
 
         ImGui::SameLine();
 
-        // Status indicator
+        // 状态指示
         ImGui::BeginDisabled();
         ImGui::PushStyleColor(ImGuiCol_Button,
             isActive ? ImVec4(0.2f, 0.8f, 0.2f, 1.0f) : ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
@@ -253,10 +253,10 @@ namespace RC::RealtimeTranslation::UI
         auto modInstance = TranslationMod::GetInstance();
         const TranslationStats* statsPtr = modInstance ? &modInstance->GetStats() : nullptr;
 
-        // Status cards
+        // 状态卡片
         ImGui::Columns(2, "status_columns", false);
 
-        // Left column
+        // 左列
         ImGui::SetColumnWidth(0, 250);
 
         ImGui::BeginChild("StatsLeft", ImVec2(0, 0), true);
@@ -288,7 +288,7 @@ namespace RC::RealtimeTranslation::UI
 
         ImGui::NextColumn();
 
-        // Right column
+        // 右列
         ImGui::BeginChild("StatsRight", ImVec2(0, 0), true);
         {
             ImGui::Text("Vocabulary Statistics");
@@ -333,7 +333,7 @@ namespace RC::RealtimeTranslation::UI
         ImGui::Text("Vocabulary Management");
         ImGui::Separator();
 
-        // Search box
+        // 搜索框
         static char searchBuffer[256] = "";
         ImGui::Text("Search:");
         ImGui::SameLine();
@@ -342,13 +342,13 @@ namespace RC::RealtimeTranslation::UI
 
         ImGui::Spacing();
 
-        // Vocabulary info
+        // 词库信息
         ImGui::Text("File: %s", vocab.IsInitialized() ? "Loaded" : "Not loaded");
         ImGui::Text("Entries: %zu", vocab.GetEntryCount());
 
         ImGui::Spacing();
 
-        // Action buttons
+        // 操作按钮
         if (ImGui::Button("Save"))
         {
             vocab.Save();

@@ -1,6 +1,7 @@
 #include <TranslationManager.hpp>
 #include <AIProvider.hpp>
 #include <VocabularyCache.hpp>
+#include <EntityExtractor.hpp>
 #include <ConfigManager.hpp>
 #include <DynamicOutput/DynamicOutput.hpp>
 #include <DebugLogger.hpp>
@@ -136,7 +137,7 @@ namespace RC::RealtimeTranslation
 
     auto TranslationManager::ProcessPendingResults() -> void
     {
-        // Process pending translation results (called on game main thread)
+        // 处理待处理的翻译结果（在游戏主线程调用）
         TranslationResult result;
         while (m_resultQueue.try_dequeue(result))
         {
@@ -153,10 +154,10 @@ namespace RC::RealtimeTranslation
         {
             TranslationRequest request;
 
-            // Try to dequeue request
+            // 尝试从队列获取请求
             if (!m_requestQueue.try_dequeue(request))
             {
-                // Queue is empty, wait
+                // 队列为空，等待
                 std::unique_lock<std::mutex> lock(m_cvMutex);
                 m_cv.wait_for(lock, std::chrono::milliseconds(100), [this]() {
                     return m_stopRequested || m_requestQueue.size_approx() > 0;
@@ -166,10 +167,10 @@ namespace RC::RealtimeTranslation
 
             m_stats.QueueSize = m_requestQueue.size_approx();
 
-            // Process request
+            // 处理请求
             auto result = ProcessRequest(request);
 
-            // Enqueue result
+            // 将结果放入结果队列
             m_resultQueue.enqueue(result);
 
             if (result.Success)
@@ -188,32 +189,56 @@ namespace RC::RealtimeTranslation
         TranslationResult result;
         result.OriginalText = request.OriginalText;
 
-        // Check vocabulary again (may have been translated by other thread while waiting)
+        // 缓存优先级 1: 完整文本精确匹配
         auto cached = VocabularyCache::Instance().Get(request.OriginalText);
         if (cached.has_value())
         {
             result.TranslatedText = cached.value();
             result.Success = true;
             m_stats.CacheHits++;
+            RT_DEBUG_LOG(std::wstring(L"[TranslationManager] Cache hit (exact): '") + request.OriginalText + L"' -> '" + result.TranslatedText + L"'");
             return result;
         }
 
         m_stats.CacheMisses++;
         m_stats.TotalTextsProcessed++;
 
-        // Check if AI provider is configured
+        // 预处理: 提取实体
+        auto extraction = EntityExtractor::ExtractEntities(request.OriginalText);
+        
+        // 缓存优先级 2: 模板骨架匹配
+        if (!extraction.Entities.empty())
+        {
+            RT_DEBUG_LOG(std::wstring(L"[TranslationManager] Extracted skeleton: '") + extraction.SkeletonText + L"' with " + std::to_wstring(extraction.Entities.size()) + L" entities");
+            
+            auto templateEntry = VocabularyCache::Instance().GetTemplate(extraction.SkeletonText);
+            if (templateEntry.has_value())
+            {
+                // 找到模板，填充槽位生成译文
+                result.TranslatedText = EntityExtractor::FillSlots(templateEntry->TargetTemplate, extraction.Entities);
+                result.Success = true;
+                m_stats.CacheHits++; // 模板命中也算缓存命中
+                RT_DEBUG_LOG(std::wstring(L"[TranslationManager] Template hit: '") + extraction.SkeletonText + L"' -> '" + result.TranslatedText + L"'");
+                
+                // 同时存储完整文本的翻译结果到词库缓存
+                VocabularyCache::Instance().Store(request.OriginalText, result.TranslatedText);
+                return result;
+            }
+        }
+
+        // 缓存优先级 3: AI翻译
+        // 检查AI提供商是否配置
         if (!AIProvider::Instance().IsConfigured())
         {
             result.ErrorMessage = L"AI provider not configured";
             return result;
         }
 
-        // Get translation config
+        // 获取翻译配置
         const auto& config = ConfigManager::Instance().GetConfig();
 
-        // Execute translation
-        auto maxRetries = config.AIProvider.MaxRetries;
-        for (int retry = 0; retry <= maxRetries; ++retry)
+        // 执行翻译
+        for (int retry = 0; retry <= config.AIProvider.MaxRetries; ++retry)
         {
             auto translationResult = AIProvider::Instance().Translate(
                 request.OriginalText,
@@ -226,13 +251,24 @@ namespace RC::RealtimeTranslation
                 result.TranslatedText = translationResult.TranslatedText;
                 result.Success = true;
                 result.Duration = translationResult.Duration;
+
+                // 存储翻译结果到词库缓存
+                VocabularyCache::Instance().Store(request.OriginalText, result.TranslatedText);
+
+                // 如果有实体，存储模板
+                if (!extraction.Entities.empty())
+                {
+                    VocabularyCache::Instance().StoreTemplateFromTranslation(extraction, result.TranslatedText);
+                    RT_DEBUG_LOG(std::wstring(L"[TranslationManager] Stored template: '") + extraction.SkeletonText + L"' -> '" + result.TranslatedText + L"'");
+                }
+
                 return result;
             }
 
             result.ErrorMessage = translationResult.ErrorMessage;
 
-            // If not last retry, wait for a while
-            if (retry < maxRetries)
+            // 如果不是最后一次重试，等待一段时间
+            if (retry < config.AIProvider.MaxRetries)
             {
                 std::this_thread::sleep_for(std::chrono::milliseconds(500 * (retry + 1)));
             }

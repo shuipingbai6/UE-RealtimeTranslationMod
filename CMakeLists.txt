@@ -20,6 +20,8 @@ set(${TARGET}_Sources
     "${CMAKE_CURRENT_SOURCE_DIR}/src/AIProvider.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ConfigManager.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/VocabularyCache.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/TemplateCache.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/EntityExtractor.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/NetworkClient.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/TextHookManager.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/HookTargetSelector.cpp"

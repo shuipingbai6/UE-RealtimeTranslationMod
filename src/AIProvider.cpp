@@ -7,6 +7,7 @@
 
 namespace RC::RealtimeTranslation
 {
+    // JSON辅助函数
     static auto JsonEscape(const std::wstring& s) -> std::wstring
     {
         std::wstring result;
@@ -58,16 +59,17 @@ namespace RC::RealtimeTranslation
         return result;
     }
 
+    // 从JSON响应中提取内容
     static auto ExtractContentFromResponse(const std::wstring& json) -> std::wstring
     {
-        // OpenAIresponse format: {"choices":[{"message":{"content":"..."}}]}
-        // Some responses may have empty delta.content, prioritize message.content
+        // OpenAI响应格式: {"choices":[{"message":{"content":"..."}}]}
+        // 注意：某些响应中 delta.content 可能为空，需要优先查找 message.content
 
-        // Try to find "content" inside "message" object
+        // 首先尝试查找 "message" 对象里的 "content"
         size_t messagePos = json.find(L"\"message\"");
         if (messagePos != std::wstring::npos)
         {
-            // In message object, find content
+            // 在 message 对象内查找 content
             size_t messageStart = json.find(L'{', messagePos);
             if (messageStart != std::wstring::npos)
             {
@@ -117,7 +119,7 @@ namespace RC::RealtimeTranslation
             }
         }
 
-        // Fallback: find any "content" field (skip empty values)
+        // 回退：查找任意 "content" 字段（跳过空值）
         size_t searchPos = 0;
         while (searchPos < json.size())
         {
@@ -165,7 +167,7 @@ namespace RC::RealtimeTranslation
             searchPos = endPos + 1;
         }
 
-        // Last resort: try to find "text" field
+        // 最后尝试查找 "text" 字段
         size_t textPos = json.find(L"\"text\"");
         if (textPos != std::wstring::npos)
         {
@@ -359,7 +361,7 @@ namespace RC::RealtimeTranslation
             return {false, L"AI provider not configured"};
         }
 
-        // Send a simple test request
+        // 发送一个简单的测试请求
         auto result = Translate(L"Hello", L"en", L"zh-CN");
         return {result.Success, result.Success ? L"Connection successful" : result.ErrorMessage};
     }
@@ -370,7 +372,7 @@ namespace RC::RealtimeTranslation
         const std::wstring& targetLang
     ) -> std::wstring
     {
-        // Build OpenAI-compatible request format
+        // 构建OpenAI兼容的请求格式
         auto prompt = BuildTranslationPrompt(text, sourceLang, targetLang);
 
         std::wstringstream json;
@@ -406,7 +408,7 @@ namespace RC::RealtimeTranslation
     {
         std::wstringstream prompt;
 
-        // Build translation prompt
+        // 构建翻译提示
         if (sourceLang == L"auto")
         {
             prompt << L"Translate the following text to " << targetLang << L". ";
